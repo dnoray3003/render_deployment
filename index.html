@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Private Video Library</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 30px auto;
+      padding: 0 20px;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    #status {
+      margin: 10px 0 25px 0;
+      color: #555;
+    }
+
+    #playerSection {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      margin-bottom: 30px;
+    }
+
+    #nowPlaying {
+      margin-bottom: 15px;
+      font-size: 18px;
+      font-weight: bold;
+    }
+
+    video {
+      width: 100%;
+      max-height: 600px;
+      background: black;
+      border-radius: 8px;
+    }
+
+    #gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 20px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+    }
+
+    .card.active {
+      outline: 3px solid #222;
+    }
+
+    .thumb {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      display: block;
+      background: #ddd;
+    }
+
+    .thumb-wrap {
+      position: relative;
+    }
+
+    .duration-badge {
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 7px;
+      border-radius: 6px;
+      line-height: 1;
+    }
+
+    .card-body {
+      padding: 12px 14px 16px;
+    }
+
+    .title {
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .meta {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .empty {
+      background: #fff;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    }
+  </style>
+</head>
+<body>
+  <h1>Private Video Library</h1>
+  <div id="status">Loading videos...</div>
+
+  <section id="playerSection" style="display: none;">
+    <div id="nowPlaying">Now Playing:</div>
+    <video id="player" controls>
+      <source id="videoSource">
+      Your browser does not support HTML5 video.
+    </video>
+  </section>
+
+  <section id="gallery"></section>
+
+  <script>
+    const statusDiv = document.getElementById("status");
+    const gallery = document.getElementById("gallery");
+    const playerSection = document.getElementById("playerSection");
+    const player = document.getElementById("player");
+    const source = document.getElementById("videoSource");
+    const nowPlaying = document.getElementById("nowPlaying");
+
+    let videoData = [];
+    let activeIndex = -1;
+
+    function friendlyName(key) {
+      if (typeof key !== "string") return "Unknown video";
+      const filename = key.split("/").pop();
+      return filename.replace(/\.[^/.]+$/, "");
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes < 1) return "0 B";
+
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let value = bytes;
+      let unitIndex = 0;
+
+      while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+      }
+
+      return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+    }
+
+    function formatDate(dateString) {
+      try {
+        const date = new Date(dateString);
+        return date.toLocaleDateString();
+      } catch {
+        return dateString;
+      }
+    }
+
+    function formatDuration(seconds) {
+        if (seconds == null || isNaN(seconds)) return "";
+
+        const totalSeconds = Math.floor(seconds);
+        const mins = Math.floor(totalSeconds / 60);
+        const secs = totalSeconds % 60;
+        const hours = Math.floor(mins / 60);
+        const remainingMins = mins % 60;
+
+        if (hours > 0) {
+        return `${hours}:${String(remainingMins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        }
+
+        return `${mins}:${String(secs).padStart(2, "0")}`;
+    }
+
+    function setActiveCard(index) {
+      document.querySelectorAll(".card").forEach((card, i) => {
+        card.classList.toggle("active", i === index);
+      });
+      activeIndex = index;
+    }
+
+    async function loadVideo(index) {
+      const videoItem = videoData[index];
+      if (!videoItem || !videoItem.video_url) {
+        statusDiv.textContent = "Invalid video selection.";
+        return;
+      }
+
+      try {
+        player.pause();
+        source.src = "";
+        source.type = "";
+        player.load();
+
+        source.src = videoItem.video_url;
+        source.type = videoItem.content_type || "video/mp4";
+        player.load();
+
+        playerSection.style.display = "block";
+        nowPlaying.textContent = `Now Playing: ${videoItem.title || friendlyName(videoItem.video)}`;
+        setActiveCard(index);
+
+        try {
+          await player.play();
+          statusDiv.textContent = `Playing: ${friendlyName(videoItem.video)}`;
+        } catch (err) {
+          statusDiv.textContent = `Loaded: ${friendlyName(videoItem.video)}. Click play to start.`;
+        }
+      } catch (error) {
+        statusDiv.textContent = "Error loading video: " + error.message;
+      }
+    }
+
+    function renderGallery() {
+      gallery.innerHTML = "";
+
+      if (!videoData.length) {
+        gallery.innerHTML = `<div class="empty">No videos found.</div>`;
+        return;
+      }
+
+      videoData.forEach((item, index) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.addEventListener("click", () => loadVideo(index));
+
+        const thumbWrap = document.createElement("div");
+        thumbWrap.className = "thumb-wrap";
+
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = item.thumbnail_url || "";
+        img.alt = friendlyName(item.video);
+        img.onerror = () => {
+          img.src = "";
+          img.alt = "Thumbnail unavailable";
+        };
+
+        thumbWrap.appendChild(img);
+
+        if (item.duration_seconds != null) {
+          const durationBadge = document.createElement("div");
+          durationBadge.className = "duration-badge";
+          durationBadge.textContent = formatDuration(item.duration_seconds);
+          thumbWrap.appendChild(durationBadge);
+        }
+
+        const body = document.createElement("div");
+        body.className = "card-body";
+
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = item.title || friendlyName(item.video);
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+
+        const parts = [];
+        if (item.content_type) {
+          parts.push(item.content_type);
+        }
+        if (item.size_bytes) {
+          parts.push(formatBytes(item.size_bytes));
+        }
+        if (item.last_modified) {
+          parts.push(formatDate(item.last_modified));
+        }
+        
+        if (item.duration_seconds != null) {
+            parts.push(formatDuration(item.duration_seconds));
+        }
+        meta.textContent = parts.join(" • ");
+
+        body.appendChild(title);
+        body.appendChild(meta);
+
+        card.appendChild(thumbWrap);
+        card.appendChild(body);
+        gallery.appendChild(card);
+      });
+    }
+
+    async function loadVideoList() {
+      try {
+        const response = await fetch("/videos");
+        const data = await response.json();
+
+        if (!response.ok || !data.videos) {
+          statusDiv.textContent = data.error || "Failed to load videos.";
+          return;
+        }
+
+        videoData = data.videos;
+        renderGallery();
+
+        if (videoData.length > 0) {
+          statusDiv.textContent = `Loaded ${videoData.length} video(s).`;
+          await loadVideo(0);
+        } else {
+          statusDiv.textContent = "No videos found.";
+        }
+      } catch (error) {
+        statusDiv.textContent = "Error loading video list: " + error.message;
+      }
+    }
+
+    window.addEventListener("load", loadVideoList);
+  </script>
+</body>
+</html>
