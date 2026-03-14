@@ -68,7 +68,16 @@
       outline: 3px solid #222;
     }
 
-    .thumb {
+    .thumb-wrap {
+      position: relative;
+      width: 100%;
+      height: 150px;
+      background: #ddd;
+      overflow: hidden;
+    }
+
+    .thumb,
+    .preview-video {
       width: 100%;
       height: 150px;
       object-fit: cover;
@@ -76,8 +85,20 @@
       background: #ddd;
     }
 
-    .thumb-wrap {
-      position: relative;
+    .preview-video {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .thumb-wrap.previewing .preview-video {
+      opacity: 1;
+    }
+
+    .thumb-wrap.previewing .thumb {
+      opacity: 0;
     }
 
     .duration-badge {
@@ -91,6 +112,7 @@
       padding: 4px 7px;
       border-radius: 6px;
       line-height: 1;
+      z-index: 2;
     }
 
     .card-body {
@@ -174,19 +196,19 @@
     }
 
     function formatDuration(seconds) {
-        if (seconds == null || isNaN(seconds)) return "";
+      if (seconds == null || isNaN(seconds)) return "";
 
-        const totalSeconds = Math.floor(seconds);
-        const mins = Math.floor(totalSeconds / 60);
-        const secs = totalSeconds % 60;
-        const hours = Math.floor(mins / 60);
-        const remainingMins = mins % 60;
+      const totalSeconds = Math.floor(seconds);
+      const mins = Math.floor(totalSeconds / 60);
+      const secs = totalSeconds % 60;
+      const hours = Math.floor(mins / 60);
+      const remainingMins = mins % 60;
 
-        if (hours > 0) {
+      if (hours > 0) {
         return `${hours}:${String(remainingMins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-        }
+      }
 
-        return `${mins}:${String(secs).padStart(2, "0")}`;
+      return `${mins}:${String(secs).padStart(2, "0")}`;
     }
 
     function setActiveCard(index) {
@@ -219,13 +241,35 @@
 
         try {
           await player.play();
-          statusDiv.textContent = `Playing: ${friendlyName(videoItem.video)}`;
+          statusDiv.textContent = `Playing: ${videoItem.title || friendlyName(videoItem.video)}`;
         } catch (err) {
-          statusDiv.textContent = `Loaded: ${friendlyName(videoItem.video)}. Click play to start.`;
+          statusDiv.textContent = `Loaded: ${videoItem.title || friendlyName(videoItem.video)}. Click play to start.`;
         }
       } catch (error) {
         statusDiv.textContent = "Error loading video: " + error.message;
       }
+    }
+
+    function startPreview(previewVideo, thumbWrap) {
+      if (!previewVideo || !previewVideo.src) return;
+
+      thumbWrap.classList.add("previewing");
+      previewVideo.currentTime = 0;
+
+      const playPromise = previewVideo.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          thumbWrap.classList.remove("previewing");
+        });
+      }
+    }
+
+    function stopPreview(previewVideo, thumbWrap) {
+      if (!previewVideo) return;
+
+      previewVideo.pause();
+      previewVideo.currentTime = 0;
+      thumbWrap.classList.remove("previewing");
     }
 
     function renderGallery() {
@@ -253,7 +297,15 @@
           img.alt = "Thumbnail unavailable";
         };
 
+        const previewVideo = document.createElement("video");
+        previewVideo.className = "preview-video";
+        previewVideo.muted = true;
+        previewVideo.playsInline = true;
+        previewVideo.preload = "metadata";
+        previewVideo.src = item.video_url || "";
+
         thumbWrap.appendChild(img);
+        thumbWrap.appendChild(previewVideo);
 
         if (item.duration_seconds != null) {
           const durationBadge = document.createElement("div");
@@ -261,6 +313,9 @@
           durationBadge.textContent = formatDuration(item.duration_seconds);
           thumbWrap.appendChild(durationBadge);
         }
+
+        card.addEventListener("mouseenter", () => startPreview(previewVideo, thumbWrap));
+        card.addEventListener("mouseleave", () => stopPreview(previewVideo, thumbWrap));
 
         const body = document.createElement("div");
         body.className = "card-body";
@@ -273,8 +328,8 @@
         meta.className = "meta";
 
         const parts = [];
-        if (item.content_type) {
-          parts.push(item.content_type);
+        if (item.duration_seconds != null) {
+          parts.push(formatDuration(item.duration_seconds));
         }
         if (item.size_bytes) {
           parts.push(formatBytes(item.size_bytes));
@@ -282,10 +337,7 @@
         if (item.last_modified) {
           parts.push(formatDate(item.last_modified));
         }
-        
-        if (item.duration_seconds != null) {
-            parts.push(formatDuration(item.duration_seconds));
-        }
+
         meta.textContent = parts.join(" • ");
 
         body.appendChild(title);
