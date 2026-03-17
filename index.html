@@ -64,6 +64,26 @@
       box-shadow: 0 6px 18px rgba(0,0,0,0.12);
     }
 
+    .card-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    .delete-btn {
+      border: none;
+      background: #b42318;
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .delete-btn:hover {
+      background: #912018;
+    }
+
     .card.active {
       outline: 3px solid #222;
     }
@@ -142,7 +162,20 @@
 </head>
 <body>
   <h1>Private Video Library</h1>
-  <div id="status">Loading videos...</div>
+
+  <div id="uploadSection" style="margin-bottom:20px;">
+    <input type="file" id="fileInput" accept="video/*">
+    <button id="uploadBtn">Upload Video</button>
+  </div>
+
+  <div id="progressWrapper" style="display:none; margin-bottom:15px;">
+  <div style="height:16px; background:#ddd; border-radius:8px; overflow:hidden;">
+    <div id="progressBar" style="width:0%; height:100%; background:#222; transition:width 0.2s ease;"></div>
+  </div>
+  <div id="progressText" style="margin-top:6px; font-size:13px; color:#555;">0%</div>
+</div>
+
+<div id="status">Loading videos...</div>
 
   <section id="playerSection" style="display: none;">
     <div id="nowPlaying">Now Playing:</div>
@@ -161,6 +194,12 @@
     const player = document.getElementById("player");
     const source = document.getElementById("videoSource");
     const nowPlaying = document.getElementById("nowPlaying");
+
+    const fileInput = document.getElementById("fileInput");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const progressWrapper = document.getElementById("progressWrapper");
+    const progressBar = document.getElementById("progressBar");
+    const progressText = document.getElementById("progressText");
 
     let videoData = [];
     let activeIndex = -1;
@@ -210,6 +249,19 @@
 
       return `${mins}:${String(secs).padStart(2, "0")}`;
     }
+    
+    function setProgress(percent, label = null) {
+    const safePercent = Math.max(0, Math.min(100, percent));
+    progressWrapper.style.display = "block";
+    progressBar.style.width = `${safePercent}%`;
+    progressText.textContent = label || `${safePercent}%`;
+  }
+
+  function resetProgress() {
+    progressWrapper.style.display = "none";
+    progressBar.style.width = "0%";
+    progressText.textContent = "0%";
+  }
 
     function setActiveCard(index) {
       document.querySelectorAll(".card").forEach((card, i) => {
@@ -272,100 +324,115 @@
       thumbWrap.classList.remove("previewing");
     }
 
-    function renderGallery() {
-      gallery.innerHTML = "";
+  function renderGallery() {
+  gallery.innerHTML = "";
 
-      if (!videoData.length) {
-        gallery.innerHTML = `<div class="empty">No videos found.</div>`;
-        return;
-      }
+  if (!videoData.length) {
+    gallery.innerHTML = `<div class="empty">No videos found.</div>`;
+    return;
+  }
 
-      videoData.forEach((item, index) => {
-        const card = document.createElement("div");
-        card.className = "card";
-        card.addEventListener("click", () => loadVideo(index));
+  videoData.forEach((item, index) => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.addEventListener("click", () => loadVideo(index));
 
-        const thumbWrap = document.createElement("div");
-        thumbWrap.className = "thumb-wrap";
+    const thumbWrap = document.createElement("div");
+    thumbWrap.className = "thumb-wrap";
 
-        const img = document.createElement("img");
-        img.className = "thumb";
-        img.src = item.thumbnail_url || "";
-        img.alt = friendlyName(item.video);
-        img.onerror = () => {
-          img.src = "";
-          img.alt = "Thumbnail unavailable";
-        };
+    const img = document.createElement("img");
+    img.className = "thumb";
+    img.src = item.thumbnail_url || "";
+    img.alt = friendlyName(item.video);
+    img.onerror = () => {
+      img.src = "";
+      img.alt = "Thumbnail unavailable";
+    };
 
-        const previewVideo = document.createElement("video");
-        previewVideo.className = "preview-video";
-        previewVideo.muted = true;
-        previewVideo.playsInline = true;
-        previewVideo.preload = "metadata";
-        previewVideo.src = item.video_url || "";
+    const previewVideo = document.createElement("video");
+    previewVideo.className = "preview-video";
+    previewVideo.muted = true;
+    previewVideo.playsInline = true;
+    previewVideo.preload = "metadata";
+    previewVideo.src = item.video_url || "";
 
-        thumbWrap.appendChild(img);
-        thumbWrap.appendChild(previewVideo);
+    thumbWrap.appendChild(img);
+    thumbWrap.appendChild(previewVideo);
 
-        if (item.duration_seconds != null) {
-          const durationBadge = document.createElement("div");
-          durationBadge.className = "duration-badge";
-          durationBadge.textContent = formatDuration(item.duration_seconds);
-          thumbWrap.appendChild(durationBadge);
-        }
-
-        card.addEventListener("mouseenter", () => startPreview(previewVideo, thumbWrap));
-        card.addEventListener("mouseleave", () => stopPreview(previewVideo, thumbWrap));
-
-        const body = document.createElement("div");
-        body.className = "card-body";
-
-        const title = document.createElement("div");
-        title.className = "title";
-        title.textContent = item.title || friendlyName(item.video);
-
-        const meta = document.createElement("div");
-        meta.className = "meta";
-
-        const parts = [];
-        if (item.duration_seconds != null) {
-          parts.push(formatDuration(item.duration_seconds));
-        }
-        if (item.size_bytes) {
-          parts.push(formatBytes(item.size_bytes));
-        }
-        if (item.last_modified) {
-          parts.push(formatDate(item.last_modified));
-        }
-
-        meta.textContent = parts.join(" • ");
-
-        body.appendChild(title);
-        body.appendChild(meta);
-
-        card.appendChild(thumbWrap);
-        card.appendChild(body);
-        gallery.appendChild(card);
-      });
+    if (item.duration_seconds != null) {
+      const durationBadge = document.createElement("div");
+      durationBadge.className = "duration-badge";
+      durationBadge.textContent = formatDuration(item.duration_seconds);
+      thumbWrap.appendChild(durationBadge);
     }
 
-    async function loadVideoList() {
-      try {
-        const response = await fetch("/videos");
-        const data = await response.json();
+    card.addEventListener("mouseenter", () => startPreview(previewVideo, thumbWrap));
+    card.addEventListener("mouseleave", () => stopPreview(previewVideo, thumbWrap));
 
-        if (!response.ok || !data.videos) {
-          statusDiv.textContent = data.error || "Failed to load videos.";
-          return;
+    const body = document.createElement("div");
+    body.className = "card-body";
+
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = item.title || friendlyName(item.video);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    const parts = [];
+    if (item.duration_seconds != null) {
+      parts.push(formatDuration(item.duration_seconds));
+    }
+    if (item.size_bytes) {
+      parts.push(formatBytes(item.size_bytes));
+    }
+    if (item.last_modified) {
+      parts.push(formatDate(item.last_modified));
+    }
+
+    meta.textContent = parts.join(" • ");
+
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "delete-btn";
+    deleteBtn.textContent = "Delete";
+
+    deleteBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await deleteVideo(item.video);
+    });
+
+    actions.appendChild(deleteBtn);
+
+    body.appendChild(title);
+    body.appendChild(meta);
+    body.appendChild(actions);
+
+    card.appendChild(thumbWrap);
+    card.appendChild(body);
+    gallery.appendChild(card);
+  });
+}
+
+  async function loadVideoList() {
+    try {
+      const response = await fetch("/videos");
+      const data = await response.json();
+
+      if (!response.ok || !data.videos) {
+        statusDiv.textContent = data.error || "Failed to load videos.";
+        return;
         }
 
         videoData = data.videos;
-        renderGallery();
+    renderGallery();
 
-        if (videoData.length > 0) {
-          statusDiv.textContent = `Loaded ${videoData.length} video(s).`;
-          await loadVideo(0);
-        } else {
+      if (videoData.length > 0) {
+        statusDiv.textContent = `Loaded ${videoData.length} video(s).`;
+        await loadVideo(0);
+      } else {
           statusDiv.textContent = "No videos found.";
         }
       } catch (error) {
@@ -373,6 +440,138 @@
       }
     }
 
+  async function uploadSelectedVideo() {
+    const file = fileInput.files[0];
+
+    if (!file) {
+      statusDiv.textContent = "Please select a video file first.";
+      return;
+    }
+
+    uploadBtn.disabled = true;
+    fileInput.disabled = true;
+    setProgress(0, "Preparing upload...");
+
+    try {
+      statusDiv.textContent = `Preparing upload for ${file.name}...`;
+
+      const uploadUrlResponse = await fetch(
+        `/upload-url?file_name=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`,
+        {
+          method: "POST"
+        }
+      );
+
+      const uploadUrlData = await uploadUrlResponse.json();
+
+      if (!uploadUrlResponse.ok || uploadUrlData.error || !uploadUrlData.upload_url) {
+        statusDiv.textContent = uploadUrlData.error || "Failed to create upload URL.";
+        resetProgress();
+        return;
+      }
+
+      statusDiv.textContent = `Uploading ${file.name} directly to storage...`;
+      setProgress(0, "Uploading... 0%");
+
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", uploadUrlData.upload_url, true);
+        xhr.setRequestHeader("Content-Type", uploadUrlData.content_type);
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setProgress(percent, `Uploading... ${percent}%`);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Direct upload failed with status ${xhr.status}.`));
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error("Network error during direct upload."));
+      };
+
+      xhr.send(file);
+    });
+
+    setProgress(100, "Upload complete");
+    statusDiv.textContent = "Upload complete. Generating thumbnail...";
+
+    const thumbResponse = await fetch(
+      `/generate-thumbnail?object_name=${encodeURIComponent(uploadUrlData.object_name)}`,
+      {
+        method: "POST"
+      }
+    );
+
+    const thumbData = await thumbResponse.json();
+
+    if (!thumbResponse.ok || thumbData.error) {
+      statusDiv.textContent = thumbData.error || "Thumbnail generation failed.";
+      return;
+    }
+
+    statusDiv.textContent = `Upload successful: ${uploadUrlData.object_name}`;
+    fileInput.value = "";
+
+    await loadVideoList();
+  } catch (error) {
+    statusDiv.textContent = "Upload error: " + error.message;
+  } finally {
+    uploadBtn.disabled = false;
+    fileInput.disabled = false;
+
+    setTimeout(() => {
+      resetProgress();
+    }, 1200);
+  }
+}
+
+async function deleteVideo(videoName) {
+  const confirmed = confirm(`Delete "${videoName}"?`);
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    statusDiv.textContent = `Deleting ${videoName}...`;
+
+    const response = await fetch(
+      `/delete-video?object_name=${encodeURIComponent(videoName)}`,
+      {
+        method: "DELETE"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || data.error) {
+      statusDiv.textContent = data.error || "Delete failed.";
+      return;
+    }
+
+    statusDiv.textContent = `Deleted: ${videoName}`;
+
+    player.pause();
+    source.src = "";
+    source.type = "";
+    player.load();
+    playerSection.style.display = "none";
+
+    await loadVideoList();
+
+  } catch (error) {
+    statusDiv.textContent = "Delete error: " + error.message;
+  }
+}
+
+    uploadBtn.addEventListener("click", uploadSelectedVideo);
     window.addEventListener("load", loadVideoList);
   </script>
 </body>
