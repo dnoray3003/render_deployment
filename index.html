@@ -27,7 +27,7 @@
       background: #fff;
       border-radius: 12px;
       padding: 20px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
       margin-bottom: 30px;
     }
 
@@ -54,20 +54,26 @@
       background: #fff;
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
       cursor: pointer;
       transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
 
     .card:hover {
       transform: translateY(-3px);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+    }
+
+    .card.active {
+      outline: 3px solid #222;
     }
 
     .card-actions {
       margin-top: 10px;
       display: flex;
-      justify-content: flex-end;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
     }
 
     .delete-btn {
@@ -82,10 +88,6 @@
 
     .delete-btn:hover {
       background: #912018;
-    }
-
-    .card.active {
-      outline: 3px solid #222;
     }
 
     .thumb-wrap {
@@ -156,28 +158,72 @@
       background: #fff;
       padding: 20px;
       border-radius: 12px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
     }
   </style>
 </head>
 <body>
   <h1>Private Video Library</h1>
 
-  <div id="uploadSection" style="margin-bottom:20px;">
+  <div id="uploadSection" style="margin-bottom:20px; display:flex; gap:12px; flex-wrap:wrap;">
     <input type="file" id="fileInput" accept="video/*">
+
+    <select id="uploadCategorySelect" style="padding:10px 12px; font-size:14px;">
+      <option value="aws">AWS</option>
+      <option value="python">Python</option>
+      <option value="security">Security</option>
+      <option value="networking">Networking</option>
+      <option value="general">General</option>
+    </select>
+
     <button id="uploadBtn">Upload Video</button>
   </div>
 
-  <div id="progressWrapper" style="display:none; margin-bottom:15px;">
-  <div style="height:16px; background:#ddd; border-radius:8px; overflow:hidden;">
-    <div id="progressBar" style="width:0%; height:100%; background:#222; transition:width 0.2s ease;"></div>
+  <div id="controlsBar" style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px;">
+    <input
+      type="text"
+      id="searchInput"
+      placeholder="Search videos..."
+      style="padding:10px 12px; font-size:14px; min-width:220px;"
+    >
+
+    <select id="categoryFilter" style="padding:10px 12px; font-size:14px;">
+      <option value="all">All categories</option>
+      <option value="aws">AWS</option>
+      <option value="python">Python</option>
+      <option value="security">Security</option>
+      <option value="networking">Networking</option>
+      <option value="general">General</option>
+      <option value="uncategorized">Uncategorized</option>
+    </select>
+
+    <select id="sortSelect" style="padding:10px 12px; font-size:14px;">
+      <option value="newest">Newest first</option>
+      <option value="oldest">Oldest first</option>
+      <option value="longest">Longest first</option>
+      <option value="shortest">Shortest first</option>
+      <option value="largest">Largest first</option>
+      <option value="smallest">Smallest first</option>
+      <option value="title_asc">Title A–Z</option>
+      <option value="title_desc">Title Z–A</option>
+    </select>
   </div>
-  <div id="progressText" style="margin-top:6px; font-size:13px; color:#555;">0%</div>
-</div>
 
-<div id="status">Loading videos...</div>
+  <div id="progressWrapper" style="display:none; margin-bottom:15px;">
+    <div style="height:16px; background:#ddd; border-radius:8px; overflow:hidden;">
+      <div id="progressBar" style="width:0%; height:100%; background:#222; transition:width 0.2s ease;"></div>
+    </div>
+    <div id="progressText" style="margin-top:6px; font-size:13px; color:#555;">0%</div>
+  </div>
 
-  <section id="playerSection" style="display: none;">
+  <div id="status">Loading videos...</div>
+
+  <section id="playerSection" style="display:none;">
     <div id="nowPlaying">Now Playing:</div>
     <video id="player" controls>
       <source id="videoSource">
@@ -187,7 +233,18 @@
 
   <section id="gallery"></section>
 
+  <div id="paginationBar" style="display:flex; gap:10px; justify-content:center; align-items:center; margin:25px 0;">
+    <button id="prevPageBtn">Previous</button>
+    <span id="pageInfo">Page 1</span>
+    <button id="nextPageBtn">Next</button>
+  </div>
+
   <script>
+    const uploadCategorySelect = document.getElementById("uploadCategorySelect");
+    const categoryFilter = document.getElementById("categoryFilter");
+    const prevPageBtn = document.getElementById("prevPageBtn");
+    const nextPageBtn = document.getElementById("nextPageBtn");
+    const pageInfo = document.getElementById("pageInfo");
     const statusDiv = document.getElementById("status");
     const gallery = document.getElementById("gallery");
     const playerSection = document.getElementById("playerSection");
@@ -197,12 +254,16 @@
 
     const fileInput = document.getElementById("fileInput");
     const uploadBtn = document.getElementById("uploadBtn");
+    const searchInput = document.getElementById("searchInput");
+    const sortSelect = document.getElementById("sortSelect");
     const progressWrapper = document.getElementById("progressWrapper");
     const progressBar = document.getElementById("progressBar");
     const progressText = document.getElementById("progressText");
 
     let videoData = [];
-    let activeIndex = -1;
+    let activeVideoKey = null;
+    let currentPage = 1;
+    const pageSize = 8;
 
     function friendlyName(key) {
       if (typeof key !== "string") return "Unknown video";
@@ -212,7 +273,6 @@
 
     function formatBytes(bytes) {
       if (!bytes || bytes < 1) return "0 B";
-
       const units = ["B", "KB", "MB", "GB", "TB"];
       let value = bytes;
       let unitIndex = 0;
@@ -236,7 +296,6 @@
 
     function formatDuration(seconds) {
       if (seconds == null || isNaN(seconds)) return "";
-
       const totalSeconds = Math.floor(seconds);
       const mins = Math.floor(totalSeconds / 60);
       const secs = totalSeconds % 60;
@@ -249,29 +308,106 @@
 
       return `${mins}:${String(secs).padStart(2, "0")}`;
     }
-    
-    function setProgress(percent, label = null) {
-    const safePercent = Math.max(0, Math.min(100, percent));
-    progressWrapper.style.display = "block";
-    progressBar.style.width = `${safePercent}%`;
-    progressText.textContent = label || `${safePercent}%`;
-  }
 
-  function resetProgress() {
-    progressWrapper.style.display = "none";
-    progressBar.style.width = "0%";
-    progressText.textContent = "0%";
-  }
+    function getSavedProgress(videoKey) {
+      const saved = localStorage.getItem(`video-progress-${videoKey}`);
+      if (!saved) return null;
 
-    function setActiveCard(index) {
-      document.querySelectorAll(".card").forEach((card, i) => {
-        card.classList.toggle("active", i === index);
-      });
-      activeIndex = index;
+      const seconds = parseFloat(saved);
+      if (isNaN(seconds) || seconds <= 0) return null;
+
+      return seconds;
     }
 
-    async function loadVideo(index) {
-      const videoItem = videoData[index];
+    function setProgress(percent, label = null) {
+      const safePercent = Math.max(0, Math.min(100, percent));
+      progressWrapper.style.display = "block";
+      progressBar.style.width = `${safePercent}%`;
+      progressText.textContent = label || `${safePercent}%`;
+    }
+
+    function resetProgress() {
+      progressWrapper.style.display = "none";
+      progressBar.style.width = "0%";
+      progressText.textContent = "0%";
+    }
+
+    function getFilteredAndSortedVideos() {
+      const searchTerm = searchInput.value.trim().toLowerCase();
+      const sortMode = sortSelect.value;
+      const selectedCategory = categoryFilter.value;
+
+      let items = [...videoData];
+
+      if (selectedCategory !== "all") {
+        items = items.filter((item) => (item.category || "uncategorized") === selectedCategory);
+      }
+
+      if (searchTerm) {
+        items = items.filter((item) => {
+          const title = (item.title || friendlyName(item.video) || "").toLowerCase();
+          return title.includes(searchTerm);
+        });
+      }
+
+      items.sort((a, b) => {
+        switch (sortMode) {
+          case "oldest":
+            return new Date(a.last_modified || 0) - new Date(b.last_modified || 0);
+          case "newest":
+            return new Date(b.last_modified || 0) - new Date(a.last_modified || 0);
+          case "longest":
+            return (b.duration_seconds || 0) - (a.duration_seconds || 0);
+          case "shortest":
+            return (a.duration_seconds || 0) - (b.duration_seconds || 0);
+          case "largest":
+            return (b.size_bytes || 0) - (a.size_bytes || 0);
+          case "smallest":
+            return (a.size_bytes || 0) - (b.size_bytes || 0);
+          case "title_desc":
+            return (b.title || friendlyName(b.video) || "").localeCompare(a.title || friendlyName(a.video) || "");
+          case "title_asc":
+            return (a.title || friendlyName(a.video) || "").localeCompare(b.title || friendlyName(b.video) || "");
+          default:
+            return new Date(b.last_modified || 0) - new Date(a.last_modified || 0);
+        }
+      });
+
+      return items;
+    }
+
+    function getPaginatedVideos(items) {
+      const start = (currentPage - 1) * pageSize;
+      const end = start + pageSize;
+      return items.slice(start, end);
+    }
+
+    function updatePaginationControls(totalItems) {
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      if (currentPage > totalPages) currentPage = totalPages;
+
+      pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+      prevPageBtn.disabled = currentPage === 1;
+      nextPageBtn.disabled = currentPage === totalPages;
+    }
+
+    function setActiveCard(videoKey) {
+      document.querySelectorAll(".card").forEach((card) => {
+        card.classList.toggle("active", card.dataset.videoKey === videoKey);
+      });
+      activeVideoKey = videoKey;
+    }
+
+    function getVideoByKey(videoKey) {
+      return videoData.find((item) => item.video === videoKey) || null;
+    }
+
+    function getVisibleVideoKeys() {
+      return getFilteredAndSortedVideos().map((item) => item.video);
+    }
+
+    async function loadVideoByKey(videoKey, autoplay = true) {
+      const videoItem = getVideoByKey(videoKey);
       if (!videoItem || !videoItem.video_url) {
         statusDiv.textContent = "Invalid video selection.";
         return;
@@ -285,17 +421,29 @@
 
         source.src = videoItem.video_url;
         source.type = videoItem.content_type || "video/mp4";
+
+        player.onloadedmetadata = () => {
+          const savedTime = getSavedProgress(videoItem.video);
+          if (savedTime && player.duration && savedTime < player.duration - 3) {
+            player.currentTime = savedTime;
+          }
+        };
+
         player.load();
 
         playerSection.style.display = "block";
         nowPlaying.textContent = `Now Playing: ${videoItem.title || friendlyName(videoItem.video)}`;
-        setActiveCard(index);
+        setActiveCard(videoItem.video);
 
-        try {
-          await player.play();
-          statusDiv.textContent = `Playing: ${videoItem.title || friendlyName(videoItem.video)}`;
-        } catch (err) {
-          statusDiv.textContent = `Loaded: ${videoItem.title || friendlyName(videoItem.video)}. Click play to start.`;
+        if (autoplay) {
+          try {
+            await player.play();
+            statusDiv.textContent = `Playing: ${videoItem.title || friendlyName(videoItem.video)}`;
+          } catch {
+            statusDiv.textContent = `Loaded: ${videoItem.title || friendlyName(videoItem.video)}. Click play to start.`;
+          }
+        } else {
+          statusDiv.textContent = `Loaded: ${videoItem.title || friendlyName(videoItem.video)}.`;
         }
       } catch (error) {
         statusDiv.textContent = "Error loading video: " + error.message;
@@ -324,255 +472,375 @@
       thumbWrap.classList.remove("previewing");
     }
 
-  function renderGallery() {
-  gallery.innerHTML = "";
+    function renderGallery() {
+      gallery.innerHTML = "";
 
-  if (!videoData.length) {
-    gallery.innerHTML = `<div class="empty">No videos found.</div>`;
-    return;
-  }
+      const visibleVideos = getFilteredAndSortedVideos();
+      updatePaginationControls(visibleVideos.length);
 
-  videoData.forEach((item, index) => {
-    const card = document.createElement("div");
-    card.className = "card";
-    card.addEventListener("click", () => loadVideo(index));
+      const paginatedVideos = getPaginatedVideos(visibleVideos);
 
-    const thumbWrap = document.createElement("div");
-    thumbWrap.className = "thumb-wrap";
-
-    const img = document.createElement("img");
-    img.className = "thumb";
-    img.src = item.thumbnail_url || "";
-    img.alt = friendlyName(item.video);
-    img.onerror = () => {
-      img.src = "";
-      img.alt = "Thumbnail unavailable";
-    };
-
-    const previewVideo = document.createElement("video");
-    previewVideo.className = "preview-video";
-    previewVideo.muted = true;
-    previewVideo.playsInline = true;
-    previewVideo.preload = "metadata";
-    previewVideo.src = item.video_url || "";
-
-    thumbWrap.appendChild(img);
-    thumbWrap.appendChild(previewVideo);
-
-    if (item.duration_seconds != null) {
-      const durationBadge = document.createElement("div");
-      durationBadge.className = "duration-badge";
-      durationBadge.textContent = formatDuration(item.duration_seconds);
-      thumbWrap.appendChild(durationBadge);
-    }
-
-    card.addEventListener("mouseenter", () => startPreview(previewVideo, thumbWrap));
-    card.addEventListener("mouseleave", () => stopPreview(previewVideo, thumbWrap));
-
-    const body = document.createElement("div");
-    body.className = "card-body";
-
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = item.title || friendlyName(item.video);
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-
-    const parts = [];
-    if (item.duration_seconds != null) {
-      parts.push(formatDuration(item.duration_seconds));
-    }
-    if (item.size_bytes) {
-      parts.push(formatBytes(item.size_bytes));
-    }
-    if (item.last_modified) {
-      parts.push(formatDate(item.last_modified));
-    }
-
-    meta.textContent = parts.join(" • ");
-
-    const actions = document.createElement("div");
-    actions.className = "card-actions";
-
-    const deleteBtn = document.createElement("button");
-    deleteBtn.className = "delete-btn";
-    deleteBtn.textContent = "Delete";
-
-    deleteBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      await deleteVideo(item.video);
-    });
-
-    actions.appendChild(deleteBtn);
-
-    body.appendChild(title);
-    body.appendChild(meta);
-    body.appendChild(actions);
-
-    card.appendChild(thumbWrap);
-    card.appendChild(body);
-    gallery.appendChild(card);
-  });
-}
-
-  async function loadVideoList() {
-    try {
-      const response = await fetch("/videos");
-      const data = await response.json();
-
-      if (!response.ok || !data.videos) {
-        statusDiv.textContent = data.error || "Failed to load videos.";
+      if (!paginatedVideos.length) {
+        gallery.innerHTML = `<div class="empty">No videos match your search.</div>`;
         return;
+      }
+
+      paginatedVideos.forEach((item) => {
+        const card = document.createElement("div");
+        card.className = "card";
+        card.dataset.videoKey = item.video;
+        if (item.video === activeVideoKey) {
+          card.classList.add("active");
+        }
+        card.addEventListener("click", () => loadVideoByKey(item.video));
+
+        const thumbWrap = document.createElement("div");
+        thumbWrap.className = "thumb-wrap";
+
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = item.thumbnail_url || "";
+        img.alt = friendlyName(item.video);
+        img.onerror = () => {
+          img.src = "";
+          img.alt = "Thumbnail unavailable";
+        };
+
+        const previewVideo = document.createElement("video");
+        previewVideo.className = "preview-video";
+        previewVideo.muted = true;
+        previewVideo.playsInline = true;
+        previewVideo.preload = "metadata";
+        previewVideo.src = item.video_url || "";
+
+        thumbWrap.appendChild(img);
+        thumbWrap.appendChild(previewVideo);
+
+        if (item.duration_seconds != null) {
+          const durationBadge = document.createElement("div");
+          durationBadge.className = "duration-badge";
+          durationBadge.textContent = formatDuration(item.duration_seconds);
+          thumbWrap.appendChild(durationBadge);
+        }
+
+        const savedProgress = getSavedProgress(item.video);
+        if (savedProgress) {
+          const resumeBadge = document.createElement("div");
+          resumeBadge.className = "duration-badge";
+          resumeBadge.style.left = "8px";
+          resumeBadge.style.right = "auto";
+          resumeBadge.style.bottom = "8px";
+          resumeBadge.textContent = `Resume ${formatDuration(savedProgress)}`;
+          thumbWrap.appendChild(resumeBadge);
+        }
+
+        card.addEventListener("mouseenter", () => startPreview(previewVideo, thumbWrap));
+        card.addEventListener("mouseleave", () => stopPreview(previewVideo, thumbWrap));
+
+        const body = document.createElement("div");
+        body.className = "card-body";
+
+        if (item.category) {
+          const cat = document.createElement("div");
+          cat.style.fontSize = "11px";
+          cat.style.marginBottom = "6px";
+          cat.style.color = "#777";
+          cat.textContent = item.category.toUpperCase();
+          body.appendChild(cat);
+        }
+
+        const title = document.createElement("div");
+        title.className = "title";
+        title.textContent = item.title || friendlyName(item.video);
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+
+        const parts = [];
+        if (item.category) parts.push(item.category);
+        if (item.duration_seconds != null) parts.push(formatDuration(item.duration_seconds));
+        if (item.size_bytes) parts.push(formatBytes(item.size_bytes));
+        if (item.last_modified) parts.push(formatDate(item.last_modified));
+        meta.textContent = parts.join(" • ");
+
+        const actions = document.createElement("div");
+        actions.className = "card-actions";
+
+        const categorySelect = document.createElement("select");
+        categorySelect.style.padding = "6px 8px";
+        categorySelect.style.fontSize = "12px";
+
+        ["aws", "python", "security", "networking", "general", "uncategorized"].forEach((cat) => {
+          const option = document.createElement("option");
+          option.value = cat;
+          option.textContent = cat;
+          if ((item.category || "uncategorized") === cat) {
+            option.selected = true;
+          }
+          categorySelect.appendChild(option);
+        });
+
+        categorySelect.addEventListener("click", (event) => {
+          event.stopPropagation();
+        });
+
+        categorySelect.addEventListener("change", async (event) => {
+          event.stopPropagation();
+          await updateCategory(item.video, categorySelect.value);
+        });
+
+        const deleteBtn = document.createElement("button");
+        deleteBtn.className = "delete-btn";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          await deleteVideo(item.video);
+        });
+
+        actions.appendChild(categorySelect);
+        actions.appendChild(deleteBtn);
+
+        body.appendChild(title);
+        body.appendChild(meta);
+        body.appendChild(actions);
+
+        card.appendChild(thumbWrap);
+        card.appendChild(body);
+        gallery.appendChild(card);
+      });
+    }
+
+    async function loadVideoList(preferredVideoKey = activeVideoKey) {
+      try {
+        const response = await fetch("/videos");
+        const data = await response.json();
+
+        if (!response.ok || !data.videos) {
+          statusDiv.textContent = data.error || "Failed to load videos.";
+          return;
         }
 
         videoData = data.videos;
-    renderGallery();
+        renderGallery();
 
-      if (videoData.length > 0) {
-        statusDiv.textContent = `Loaded ${videoData.length} video(s).`;
-        await loadVideo(0);
-      } else {
+        if (videoData.length === 0) {
+          activeVideoKey = null;
+          player.pause();
+          source.src = "";
+          source.type = "";
+          player.load();
+          playerSection.style.display = "none";
           statusDiv.textContent = "No videos found.";
+          return;
         }
+
+        const preferredExists = preferredVideoKey && videoData.some((item) => item.video === preferredVideoKey);
+        const videoToLoad = preferredExists ? preferredVideoKey : videoData[0].video;
+
+        statusDiv.textContent = `Loaded ${videoData.length} video(s).`;
+        await loadVideoByKey(videoToLoad, preferredExists);
       } catch (error) {
         statusDiv.textContent = "Error loading video list: " + error.message;
       }
     }
 
-  async function uploadSelectedVideo() {
-    const file = fileInput.files[0];
+    async function uploadSelectedVideo() {
+      const file = fileInput.files[0];
 
-    if (!file) {
-      statusDiv.textContent = "Please select a video file first.";
-      return;
-    }
-
-    uploadBtn.disabled = true;
-    fileInput.disabled = true;
-    setProgress(0, "Preparing upload...");
-
-    try {
-      statusDiv.textContent = `Preparing upload for ${file.name}...`;
-
-      const uploadUrlResponse = await fetch(
-        `/upload-url?file_name=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}`,
-        {
-          method: "POST"
-        }
-      );
-
-      const uploadUrlData = await uploadUrlResponse.json();
-
-      if (!uploadUrlResponse.ok || uploadUrlData.error || !uploadUrlData.upload_url) {
-        statusDiv.textContent = uploadUrlData.error || "Failed to create upload URL.";
-        resetProgress();
+      if (!file) {
+        statusDiv.textContent = "Please select a video file first.";
         return;
       }
 
-      statusDiv.textContent = `Uploading ${file.name} directly to storage...`;
-      setProgress(0, "Uploading... 0%");
+      uploadBtn.disabled = true;
+      fileInput.disabled = true;
+      setProgress(0, "Preparing upload...");
 
-      await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("PUT", uploadUrlData.upload_url, true);
-        xhr.setRequestHeader("Content-Type", uploadUrlData.content_type);
+      try {
+        statusDiv.textContent = `Preparing upload for ${file.name}...`;
 
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            setProgress(percent, `Uploading... ${percent}%`);
-          }
-        };
+        const uploadUrlResponse = await fetch(
+          `/upload-url?file_name=${encodeURIComponent(file.name)}&content_type=${encodeURIComponent(file.type || "application/octet-stream")}&category=${encodeURIComponent(uploadCategorySelect.value)}`,
+          { method: "POST" }
+        );
 
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Direct upload failed with status ${xhr.status}.`));
+        const uploadUrlData = await uploadUrlResponse.json();
+
+        if (!uploadUrlResponse.ok || uploadUrlData.error || !uploadUrlData.upload_url) {
+          statusDiv.textContent = uploadUrlData.error || "Failed to create upload URL.";
+          resetProgress();
+          return;
         }
-      };
 
-      xhr.onerror = () => {
-        reject(new Error("Network error during direct upload."));
-      };
+        statusDiv.textContent = `Uploading ${file.name} directly to storage...`;
+        setProgress(0, "Uploading... 0%");
 
-      xhr.send(file);
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", uploadUrlData.upload_url, true);
+          xhr.setRequestHeader("Content-Type", uploadUrlData.content_type);
+
+          xhr.upload.onprogress = (event) => {
+            if (event.lengthComputable) {
+              const percent = Math.round((event.loaded / event.total) * 100);
+              setProgress(percent, `Uploading... ${percent}%`);
+            }
+          };
+
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve();
+            } else {
+              reject(new Error(`Direct upload failed with status ${xhr.status}.`));
+            }
+          };
+
+          xhr.onerror = () => {
+            reject(new Error("Network error during direct upload."));
+          };
+
+          xhr.send(file);
+        });
+
+        setProgress(100, "Upload complete");
+        statusDiv.textContent = "Upload complete. Generating thumbnail...";
+
+        const thumbResponse = await fetch(
+          `/generate-thumbnail?object_name=${encodeURIComponent(uploadUrlData.object_name)}`,
+          { method: "POST" }
+        );
+
+        const thumbData = await thumbResponse.json();
+
+        if (!thumbResponse.ok || thumbData.error) {
+          statusDiv.textContent = thumbData.error || "Thumbnail generation failed.";
+          return;
+        }
+
+        statusDiv.textContent = `Upload successful: ${uploadUrlData.object_name}`;
+        fileInput.value = "";
+        await loadVideoList(uploadUrlData.object_name);
+      } catch (error) {
+        statusDiv.textContent = "Upload error: " + error.message;
+      } finally {
+        uploadBtn.disabled = false;
+        fileInput.disabled = false;
+
+        setTimeout(() => {
+          resetProgress();
+        }, 1200);
+      }
+    }
+
+    async function deleteVideo(videoName) {
+      const confirmed = confirm(`Delete "${videoName}"?`);
+      if (!confirmed) return;
+
+      try {
+        statusDiv.textContent = `Deleting ${videoName}...`;
+
+        const response = await fetch(
+          `/delete-video?object_name=${encodeURIComponent(videoName)}`,
+          { method: "DELETE" }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+          statusDiv.textContent = data.error || "Delete failed.";
+          return;
+        }
+
+        if (activeVideoKey === videoName) {
+          activeVideoKey = null;
+          player.pause();
+          source.src = "";
+          source.type = "";
+          player.load();
+          playerSection.style.display = "none";
+        }
+
+        statusDiv.textContent = `Deleted: ${videoName}`;
+        await loadVideoList();
+      } catch (error) {
+        statusDiv.textContent = "Delete error: " + error.message;
+      }
+    }
+
+    async function updateCategory(videoName, category) {
+      try {
+        statusDiv.textContent = `Updating category for ${videoName}...`;
+
+        const response = await fetch(
+          `/update-category?object_name=${encodeURIComponent(videoName)}&category=${encodeURIComponent(category)}`,
+          { method: "POST" }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || data.error) {
+          statusDiv.textContent = data.error || "Category update failed.";
+          return;
+        }
+
+        statusDiv.textContent = `Updated category: ${videoName} → ${category}`;
+        await loadVideoList(videoName);
+      } catch (error) {
+        statusDiv.textContent = "Category update error: " + error.message;
+      }
+    }
+
+    searchInput.addEventListener("input", () => {
+      currentPage = 1;
+      renderGallery();
     });
 
-    setProgress(100, "Upload complete");
-    statusDiv.textContent = "Upload complete. Generating thumbnail...";
+    categoryFilter.addEventListener("change", () => {
+      currentPage = 1;
+      renderGallery();
+    });
 
-    const thumbResponse = await fetch(
-      `/generate-thumbnail?object_name=${encodeURIComponent(uploadUrlData.object_name)}`,
-      {
-        method: "POST"
+    sortSelect.addEventListener("change", () => {
+      currentPage = 1;
+      renderGallery();
+    });
+
+    prevPageBtn.addEventListener("click", () => {
+      if (currentPage > 1) {
+        currentPage--;
+        renderGallery();
       }
-    );
+    });
 
-    const thumbData = await thumbResponse.json();
-
-    if (!thumbResponse.ok || thumbData.error) {
-      statusDiv.textContent = thumbData.error || "Thumbnail generation failed.";
-      return;
-    }
-
-    statusDiv.textContent = `Upload successful: ${uploadUrlData.object_name}`;
-    fileInput.value = "";
-
-    await loadVideoList();
-  } catch (error) {
-    statusDiv.textContent = "Upload error: " + error.message;
-  } finally {
-    uploadBtn.disabled = false;
-    fileInput.disabled = false;
-
-    setTimeout(() => {
-      resetProgress();
-    }, 1200);
-  }
-}
-
-async function deleteVideo(videoName) {
-  const confirmed = confirm(`Delete "${videoName}"?`);
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    statusDiv.textContent = `Deleting ${videoName}...`;
-
-    const response = await fetch(
-      `/delete-video?object_name=${encodeURIComponent(videoName)}`,
-      {
-        method: "DELETE"
+    nextPageBtn.addEventListener("click", () => {
+      const totalItems = getFilteredAndSortedVideos().length;
+      const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+      if (currentPage < totalPages) {
+        currentPage++;
+        renderGallery();
       }
-    );
+    });
 
-    const data = await response.json();
+    player.addEventListener("timeupdate", () => {
+      if (!activeVideoKey) return;
+      localStorage.setItem(`video-progress-${activeVideoKey}`, player.currentTime);
+    });
 
-    if (!response.ok || data.error) {
-      statusDiv.textContent = data.error || "Delete failed.";
-      return;
-    }
+    player.addEventListener("ended", async () => {
+      if (!activeVideoKey) return;
 
-    statusDiv.textContent = `Deleted: ${videoName}`;
+      localStorage.removeItem(`video-progress-${activeVideoKey}`);
 
-    player.pause();
-    source.src = "";
-    source.type = "";
-    player.load();
-    playerSection.style.display = "none";
+      const visibleVideoKeys = getVisibleVideoKeys();
+      const currentVisibleIndex = visibleVideoKeys.indexOf(activeVideoKey);
 
-    await loadVideoList();
-
-  } catch (error) {
-    statusDiv.textContent = "Delete error: " + error.message;
-  }
-}
+      if (currentVisibleIndex > -1 && currentVisibleIndex < visibleVideoKeys.length - 1) {
+        await loadVideoByKey(visibleVideoKeys[currentVisibleIndex + 1]);
+      }
+    });
 
     uploadBtn.addEventListener("click", uploadSelectedVideo);
-    window.addEventListener("load", loadVideoList);
+    window.addEventListener("load", () => loadVideoList());
   </script>
 </body>
 </html>
