@@ -1,21 +1,22 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
-from fastapi.responses import FileResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from datetime import datetime
+from pathlib import Path
+import os
+import secrets
+import subprocess
+import tempfile
+
 import boto3
 from botocore.client import Config
 from dotenv import load_dotenv
-from pathlib import Path
-from datetime import datetime
-import os
-import subprocess
-import secrets
-import tempfile
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 load_dotenv()
 
 app = FastAPI()
-
 security = HTTPBasic()
+BASE_DIR = Path(__file__).resolve().parent
 
 APP_USERNAME = os.getenv("APP_USERNAME")
 APP_PASSWORD = os.getenv("APP_PASSWORD")
@@ -28,8 +29,8 @@ WASABI_BUCKET = os.getenv("WASABI_BUCKET")
 VIDEO_PREFIX = ""
 THUMBNAIL_PREFIX = "thumbnails/"
 URL_EXPIRY = 300  # seconds
-
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov", ".webm")
+DEFAULT_CATEGORY = "uncategorized"
 
 s3 = boto3.client(
     "s3",
@@ -39,12 +40,15 @@ s3 = boto3.client(
     config=Config(signature_version="s3v4"),
 )
 
+
 def safe_object_name(filename: str) -> str:
     original = Path(filename).name
     stem = Path(original).stem.replace(" ", "-")
     suffix = Path(original).suffix.lower()
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     return f"{stem}-{timestamp}{suffix}"
+
+
 
 def guess_content_type(filename: str) -> str:
     name = filename.lower()
@@ -61,12 +65,21 @@ def guess_content_type(filename: str) -> str:
     return "application/octet-stream"
 
 
+
 def is_video_file(key: str) -> bool:
     return key.lower().endswith(VIDEO_EXTENSIONS)
 
 
+
+def normalize_category(category: str | None) -> str:
+    cleaned = (category or DEFAULT_CATEGORY).strip().lower()
+    return cleaned or DEFAULT_CATEGORY
+
+
+
 def thumbnail_key_from_video_key(video_key: str) -> str:
     return f"{THUMBNAIL_PREFIX}{Path(video_key).stem}.jpg"
+
 
 
 def get_video_duration_seconds(video_source: str) -> int | None:
@@ -98,25 +111,40 @@ def get_video_duration_seconds(video_source: str) -> int | None:
     except Exception:
         return None
 
-def get_video_duration_metadata(video_key: str) -> int | None:
+
+
+def get_video_object_metadata(video_key: str) -> dict:
     try:
         response = s3.head_object(Bucket=WASABI_BUCKET, Key=video_key)
         metadata = response.get("Metadata", {})
+
         duration_value = metadata.get("duration_seconds")
+        try:
+            duration_seconds = int(duration_value) if duration_value is not None else None
+        except ValueError:
+            duration_seconds = None
 
-        if duration_value is None:
-            return None
-
-        return int(duration_value)
+        return {
+            "duration_seconds": duration_seconds,
+            "category": normalize_category(metadata.get("category")),
+        }
     except Exception:
-        return None
-    
-def save_video_duration_metadata(video_key: str, duration_seconds: int) -> None:
+        return {
+            "duration_seconds": None,
+            "category": DEFAULT_CATEGORY,
+        }
+
+
+
+def save_video_category_metadata(video_key: str, category: str) -> None:
     head = s3.head_object(Bucket=WASABI_BUCKET, Key=video_key)
 
     content_type = head.get("ContentType") or guess_content_type(video_key)
     existing_metadata = head.get("Metadata", {}).copy()
-    existing_metadata["duration_seconds"] = str(duration_seconds)
+    existing_metadata["category"] = normalize_category(category)
+
+    if "duration_seconds" not in existing_metadata:
+        existing_metadata["duration_seconds"] = ""
 
     s3.copy_object(
         Bucket=WASABI_BUCKET,
@@ -125,7 +153,30 @@ def save_video_duration_metadata(video_key: str, duration_seconds: int) -> None:
         Metadata=existing_metadata,
         MetadataDirective="REPLACE",
         ContentType=content_type,
-    )   
+    )
+
+
+
+def save_video_duration_metadata(video_key: str, duration_seconds: int) -> None:
+    head = s3.head_object(Bucket=WASABI_BUCKET, Key=video_key)
+
+    content_type = head.get("ContentType") or guess_content_type(video_key)
+    existing_metadata = head.get("Metadata", {}).copy()
+    existing_metadata["duration_seconds"] = str(duration_seconds)
+
+    if "category" not in existing_metadata:
+        existing_metadata["category"] = DEFAULT_CATEGORY
+
+    s3.copy_object(
+        Bucket=WASABI_BUCKET,
+        Key=video_key,
+        CopySource={"Bucket": WASABI_BUCKET, "Key": video_key},
+        Metadata=existing_metadata,
+        MetadataDirective="REPLACE",
+        ContentType=content_type,
+    )
+
+
 
 def generate_presigned_object_url(object_key: str, content_type: str) -> str:
     return s3.generate_presigned_url(
@@ -139,21 +190,11 @@ def generate_presigned_object_url(object_key: str, content_type: str) -> str:
     )
 
 
+
 def friendly_title_from_key(key: str) -> str:
     filename = Path(key).stem
     return filename.replace("-", " ").replace("_", " ").strip().title()
 
-
-def format_bytes(size: int) -> str:
-    units = ["B", "KB", "MB", "GB", "TB"]
-    value = float(size)
-
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            if unit == "B":
-                return f"{int(value)} {unit}"
-            return f"{value:.1f} {unit}"
-        value /= 1024
 
 
 def require_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
@@ -169,107 +210,45 @@ def require_basic_auth(credentials: HTTPBasicCredentials = Depends(security)):
 
     return credentials.username
 
+
+
 def guess_upload_content_type(filename: str, fallback: str | None = None) -> str:
     if fallback and fallback != "application/octet-stream":
         return fallback
     return guess_content_type(filename)
 
 
+
+def list_all_objects(prefix: str = VIDEO_PREFIX) -> list[dict]:
+    contents: list[dict] = []
+    continuation_token: str | None = None
+
+    while True:
+        params = {"Bucket": WASABI_BUCKET, "Prefix": prefix}
+        if continuation_token:
+            params["ContinuationToken"] = continuation_token
+
+        response = s3.list_objects_v2(**params)
+        contents.extend(response.get("Contents", []))
+
+        if not response.get("IsTruncated"):
+            break
+
+        continuation_token = response.get("NextContinuationToken")
+
+    return contents
+
+
 @app.get("/")
 def serve_home(username: str = Depends(require_basic_auth)):
-    return FileResponse("index.html")
+    return FileResponse(BASE_DIR / "index.html")
 
-@app.post("/upload")
-async def upload_video(
-    file: UploadFile = File(...),
-    username: str = Depends(require_basic_auth),
-):
-    temp_video_path = None
-
-    try:
-        if not file.filename:
-            return {"error": "No file selected"}
-
-        object_name = safe_object_name(file.filename)
-
-        if not is_video_file(object_name):
-            return {"error": "Unsupported file type"}
-
-        # Save uploaded file to a temp location in chunks
-        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(object_name).suffix) as temp_video:
-            temp_video_path = temp_video.name
-
-            while True:
-                chunk = await file.read(1024 * 1024)  # 1 MB chunks
-                if not chunk:
-                    break
-                temp_video.write(chunk)
-
-        # Upload the temp file to Wasabi
-        s3.upload_file(
-            temp_video_path,
-            WASABI_BUCKET,
-            object_name,
-            ExtraArgs={
-                "ContentType": file.content_type or guess_content_type(object_name)
-            },
-        )
-
-        # Generate thumbnail
-        thumb_key = thumbnail_key_from_video_key(object_name)
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_thumb:
-            temp_thumb_path = temp_thumb.name
-
-        result = subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-ss",
-                "00:00:05",
-                "-i",
-                temp_video_path,
-                "-frames:v",
-                "1",
-                "-q:v",
-                "2",
-                temp_thumb_path,
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-        if result.returncode == 0 and os.path.exists(temp_thumb_path):
-            s3.upload_file(
-                temp_thumb_path,
-                WASABI_BUCKET,
-                thumb_key,
-                ExtraArgs={"ContentType": "image/jpeg"},
-            )
-
-        # Clean up thumbnail temp file
-        if os.path.exists(temp_thumb_path):
-            os.remove(temp_thumb_path)
-
-        return {
-            "message": "Upload successful",
-            "video": object_name,
-            "thumbnail": thumb_key,
-        }
-
-    except Exception as e:
-        return {"error": str(e)}
-
-    finally:
-        await file.close()
-
-        if temp_video_path and os.path.exists(temp_video_path):
-            os.remove(temp_video_path)
 
 @app.post("/upload-url")
 async def create_upload_url(
     file_name: str,
     content_type: str | None = None,
+    category: str | None = None,
     username: str = Depends(require_basic_auth),
 ):
     try:
@@ -279,6 +258,7 @@ async def create_upload_url(
             return {"error": "Unsupported file type"}
 
         upload_content_type = guess_upload_content_type(object_name, content_type)
+        clean_category = normalize_category(category)
 
         upload_url = s3.generate_presigned_url(
             "put_object",
@@ -286,6 +266,7 @@ async def create_upload_url(
                 "Bucket": WASABI_BUCKET,
                 "Key": object_name,
                 "ContentType": upload_content_type,
+                "Metadata": {"category": clean_category},
             },
             ExpiresIn=300,
         )
@@ -294,17 +275,18 @@ async def create_upload_url(
             "upload_url": upload_url,
             "object_name": object_name,
             "content_type": upload_content_type,
+            "category": clean_category,
         }
 
     except Exception as e:
         return {"error": str(e)}
 
+
 @app.get("/videos")
 def list_videos(username: str = Depends(require_basic_auth)):
     try:
-        response = s3.list_objects_v2(Bucket=WASABI_BUCKET, Prefix=VIDEO_PREFIX)
-        contents = response.get("Contents", [])
-
+        contents = list_all_objects(VIDEO_PREFIX)
+        existing_keys = {obj["Key"] for obj in contents if "Key" in obj}
         videos = []
 
         for obj in contents:
@@ -312,29 +294,18 @@ def list_videos(username: str = Depends(require_basic_auth)):
 
             if key == VIDEO_PREFIX or key.endswith("/"):
                 continue
-
             if key.startswith(THUMBNAIL_PREFIX):
                 continue
-
             if not is_video_file(key):
                 continue
 
             thumbnail_key = thumbnail_key_from_video_key(key)
+            metadata_info = get_video_object_metadata(key)
 
-            video_url = generate_presigned_object_url(
-                key,
-                guess_content_type(key),
-            )
-
-            thumbnail_url = generate_presigned_object_url(
-                thumbnail_key,
-                "image/jpeg",
-            )
-
-            duration_seconds = get_video_duration_metadata(key)
-
-            if duration_seconds is None:
-                duration_seconds = get_video_duration_seconds(video_url)
+            video_url = generate_presigned_object_url(key, guess_content_type(key))
+            thumbnail_url = None
+            if thumbnail_key in existing_keys:
+                thumbnail_url = generate_presigned_object_url(thumbnail_key, "image/jpeg")
 
             videos.append(
                 {
@@ -346,14 +317,17 @@ def list_videos(username: str = Depends(require_basic_auth)):
                     "content_type": guess_content_type(key),
                     "size_bytes": obj.get("Size", 0),
                     "last_modified": obj.get("LastModified").isoformat() if obj.get("LastModified") else None,
-                    "duration_seconds": duration_seconds,
+                    "duration_seconds": metadata_info["duration_seconds"],
+                    "category": metadata_info["category"],
                 }
             )
 
+        videos.sort(key=lambda item: item["last_modified"] or "", reverse=True)
         return {"videos": videos}
 
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.post("/generate-thumbnail")
 async def generate_thumbnail_for_uploaded_video(
@@ -393,11 +367,12 @@ async def generate_thumbnail_for_uploaded_video(
             ],
             capture_output=True,
             text=True,
+            timeout=60,
         )
 
         if result.returncode != 0:
             return {"error": f"Thumbnail generation failed: {result.stderr}"}
-        
+
         duration_seconds = get_video_duration_seconds(temp_video_path)
         if duration_seconds is not None:
             save_video_duration_metadata(object_name, duration_seconds)
@@ -425,6 +400,29 @@ async def generate_thumbnail_for_uploaded_video(
             os.remove(temp_thumb_path)
 
 
+@app.post("/update-category")
+async def update_category(
+    object_name: str,
+    category: str,
+    username: str = Depends(require_basic_auth),
+):
+    try:
+        if not is_video_file(object_name):
+            return {"error": "Unsupported file type"}
+
+        clean_category = normalize_category(category)
+        save_video_category_metadata(object_name, clean_category)
+
+        return {
+            "message": "Category updated successfully",
+            "video": object_name,
+            "category": clean_category,
+        }
+
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.delete("/delete-video")
 async def delete_video(
     object_name: str,
@@ -447,9 +445,3 @@ async def delete_video(
 
     except Exception as e:
         return {"error": str(e)}
-
-    finally:
-        if temp_video_path and os.path.exists(temp_video_path):
-            os.remove(temp_video_path)
-        if temp_thumb_path and os.path.exists(temp_thumb_path):
-            os.remove(temp_thumb_path)
